@@ -37,6 +37,7 @@ class ConfigFactory
 
             self::getHostFromConfig($connectionConfig, $config);
             self::getHeartbeatFromConfig($connectionConfig, $config);
+            self::getReadWriteTimeoutFromConfig($connectionConfig, $config);
         });
     }
 
@@ -88,6 +89,20 @@ class ConfigFactory
 
         if (is_numeric($heartbeat) && intval($heartbeat) > 0) {
             $connectionConfig->setHeartbeat((int) $heartbeat);
+        }
+    }
+
+    protected static function getReadWriteTimeoutFromConfig(AMQPConnectionConfig $connectionConfig, array $config): void
+    {
+        $readTimeout = Arr::get($config, self::CONFIG_OPTIONS.'.read_timeout');
+        $writeTimeout = Arr::get($config, self::CONFIG_OPTIONS.'.write_timeout');
+
+        if (is_numeric($readTimeout) && intval($readTimeout) > 0) {
+            $connectionConfig->setReadTimeout((int) $readTimeout);
+        }
+
+        if (is_numeric($writeTimeout) && intval($writeTimeout) > 0) {
+            $connectionConfig->setWriteTimeout((int) $readTimeout);
         }
     }
 }
