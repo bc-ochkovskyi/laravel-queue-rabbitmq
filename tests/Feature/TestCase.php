@@ -8,6 +8,7 @@ use Illuminate\Support\Str;
 use PhpAmqpLib\Exception\AMQPProtocolChannelException;
 use RuntimeException;
 use VladimirYuldashev\LaravelQueueRabbitMQ\Queue\Jobs\RabbitMQJob;
+use VladimirYuldashev\LaravelQueueRabbitMQ\Tests\Mocks\TestEncryptedJob;
 use VladimirYuldashev\LaravelQueueRabbitMQ\Tests\Mocks\TestJob;
 use VladimirYuldashev\LaravelQueueRabbitMQ\Tests\TestCase as BaseTestCase;
 
@@ -16,7 +17,7 @@ abstract class TestCase extends BaseTestCase
     /**
      * @throws AMQPProtocolChannelException
      */
-    public function setUp(): void
+    protected function setUp(): void
     {
         parent::setUp();
 
@@ -39,17 +40,17 @@ abstract class TestCase extends BaseTestCase
         parent::tearDown();
     }
 
-    public function testSizeDoesNotThrowExceptionOnUnknownQueue(): void
+    public function test_size_does_not_throw_exception_on_unknown_queue(): void
     {
         $this->assertEmpty(0, Queue::size(Str::random()));
     }
 
-    public function testPopNothing(): void
+    public function test_pop_nothing(): void
     {
         $this->assertNull(Queue::pop('foo'));
     }
 
-    public function testPushRaw(): void
+    public function test_push_raw(): void
     {
         Queue::pushRaw($payload = Str::random());
 
@@ -67,9 +68,9 @@ abstract class TestCase extends BaseTestCase
         $this->assertSame(0, Queue::size());
     }
 
-    public function testPush(): void
+    public function test_push(): void
     {
-        Queue::push(new TestJob());
+        Queue::push(new TestJob);
 
         sleep(1);
 
@@ -94,7 +95,7 @@ abstract class TestCase extends BaseTestCase
         $this->assertSame(0, Queue::size());
     }
 
-    public function testPushAfterCommit(): void
+    public function test_push_after_commit(): void
     {
         $transaction = new DatabaseTransactionsManager;
 
@@ -121,7 +122,7 @@ abstract class TestCase extends BaseTestCase
         $this->assertSame(0, Queue::size());
     }
 
-    public function testLaterRaw(): void
+    public function test_later_raw(): void
     {
         $payload = Str::random();
         $data = [Str::random() => Str::random()];
@@ -151,9 +152,9 @@ abstract class TestCase extends BaseTestCase
         $this->assertSame(0, Queue::size());
     }
 
-    public function testLater(): void
+    public function test_later(): void
     {
-        Queue::later(3, new TestJob());
+        Queue::later(3, new TestJob);
 
         sleep(1);
 
@@ -178,7 +179,7 @@ abstract class TestCase extends BaseTestCase
         $this->assertSame(0, Queue::size());
     }
 
-    public function testBulk(): void
+    public function test_bulk(): void
     {
         $count = 100;
         $jobs = [];
@@ -194,7 +195,104 @@ abstract class TestCase extends BaseTestCase
         $this->assertSame($count, Queue::size());
     }
 
-    public function testReleaseRaw(): void
+    public function test_push_encrypted(): void
+    {
+        Queue::push(new TestEncryptedJob);
+
+        sleep(1);
+
+        $this->assertSame(1, Queue::size());
+        $this->assertNotNull($job = Queue::pop());
+        $this->assertSame(1, $job->attempts());
+        $this->assertInstanceOf(RabbitMQJob::class, $job);
+        $this->assertSame(TestEncryptedJob::class, $job->resolveName());
+        $this->assertNotNull($job->getJobId());
+
+        $payload = $job->payload();
+
+        $this->assertSame(TestEncryptedJob::class, $payload['displayName']);
+        $this->assertSame('Illuminate\Queue\CallQueuedHandler@call', $payload['job']);
+        $this->assertNull($payload['maxTries']);
+        $this->assertNull($payload['backoff']);
+        $this->assertNull($payload['timeout']);
+        $this->assertNull($payload['retryUntil']);
+        $this->assertSame($job->getJobId(), $payload['id']);
+
+        $job->delete();
+        $this->assertSame(0, Queue::size());
+    }
+
+    public function test_push_encrypted_after_commit(): void
+    {
+        $transaction = new DatabaseTransactionsManager;
+
+        $this->app->singleton('db.transactions', function ($app) use ($transaction) {
+            $transaction->begin('FakeDBConnection', 1);
+
+            return $transaction;
+        });
+
+        TestEncryptedJob::dispatch()->afterCommit();
+
+        sleep(1);
+        $this->assertSame(0, Queue::size());
+        $this->assertNull(Queue::pop());
+
+        $transaction->commit('FakeDBConnection', 1, 0);
+
+        sleep(1);
+
+        $this->assertSame(1, Queue::size());
+        $this->assertNotNull($job = Queue::pop());
+
+        $job->delete();
+        $this->assertSame(0, Queue::size());
+    }
+
+    public function test_encrypted_later(): void
+    {
+        Queue::later(3, new TestEncryptedJob);
+
+        sleep(1);
+
+        $this->assertSame(0, Queue::size());
+        $this->assertNull(Queue::pop());
+
+        sleep(3);
+
+        $this->assertSame(1, Queue::size());
+        $this->assertNotNull($job = Queue::pop());
+
+        $this->assertInstanceOf(RabbitMQJob::class, $job);
+
+        $body = json_decode($job->getRawBody(), true);
+
+        $this->assertSame(TestEncryptedJob::class, $body['displayName']);
+        $this->assertSame('Illuminate\Queue\CallQueuedHandler@call', $body['job']);
+        $this->assertSame(TestEncryptedJob::class, $body['data']['commandName']);
+        $this->assertNotNull($job->getJobId());
+
+        $job->delete();
+        $this->assertSame(0, Queue::size());
+    }
+
+    public function test_encrypted_bulk(): void
+    {
+        $count = 100;
+        $jobs = [];
+
+        for ($i = 0; $i < $count; $i++) {
+            $jobs[$i] = new TestEncryptedJob($i);
+        }
+
+        Queue::bulk($jobs);
+
+        sleep(1);
+
+        $this->assertSame($count, Queue::size());
+    }
+
+    public function test_release_raw(): void
     {
         Queue::pushRaw($payload = Str::random());
 
@@ -220,9 +318,9 @@ abstract class TestCase extends BaseTestCase
         $this->assertSame(0, Queue::size());
     }
 
-    public function testRelease(): void
+    public function test_release(): void
     {
-        Queue::push(new TestJob());
+        Queue::push(new TestJob);
 
         sleep(1);
 
@@ -246,7 +344,7 @@ abstract class TestCase extends BaseTestCase
         $this->assertSame(0, Queue::size());
     }
 
-    public function testReleaseWithDelayRaw(): void
+    public function test_release_with_delay_raw(): void
     {
         Queue::pushRaw($payload = Str::random());
 
@@ -277,9 +375,9 @@ abstract class TestCase extends BaseTestCase
         $this->assertSame(0, Queue::size());
     }
 
-    public function testReleaseInThePast(): void
+    public function test_release_in_the_past(): void
     {
-        Queue::push(new TestJob());
+        Queue::push(new TestJob);
 
         $job = Queue::pop();
         $job->release(-3);
@@ -292,9 +390,9 @@ abstract class TestCase extends BaseTestCase
         $this->assertSame(0, Queue::size());
     }
 
-    public function testReleaseAndReleaseWithDelayAttempts(): void
+    public function test_release_and_release_with_delay_attempts(): void
     {
-        Queue::push(new TestJob());
+        Queue::push(new TestJob);
 
         sleep(1);
 
@@ -319,9 +417,9 @@ abstract class TestCase extends BaseTestCase
         $this->assertSame(0, Queue::size());
     }
 
-    public function testDelete(): void
+    public function test_delete(): void
     {
-        Queue::push(new TestJob());
+        Queue::push(new TestJob);
 
         $job = Queue::pop();
 
@@ -333,9 +431,9 @@ abstract class TestCase extends BaseTestCase
         $this->assertNull(Queue::pop());
     }
 
-    public function testFailed(): void
+    public function test_failed(): void
     {
-        Queue::push(new TestJob());
+        Queue::push(new TestJob);
 
         $job = Queue::pop();
 

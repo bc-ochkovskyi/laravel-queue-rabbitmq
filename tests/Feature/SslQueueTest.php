@@ -4,12 +4,9 @@ namespace VladimirYuldashev\LaravelQueueRabbitMQ\Tests\Feature;
 
 use PhpAmqpLib\Connection\AMQPSSLConnection;
 
-/**
- * @group functional
- */
 class SslQueueTest extends TestCase
 {
-    public function setUp(): void
+    protected function setUp(): void
     {
         $this->markTestSkipped();
     }
@@ -46,7 +43,7 @@ class SslQueueTest extends TestCase
         ]);
     }
 
-    public function testConnection(): void
+    public function test_connection(): void
     {
         $this->assertInstanceOf(AMQPSSLConnection::class, $this->connection()->getChannel()->getConnection());
     }

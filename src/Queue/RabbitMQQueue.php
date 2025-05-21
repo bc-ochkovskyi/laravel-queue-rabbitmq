@@ -7,12 +7,15 @@ namespace VladimirYuldashev\LaravelQueueRabbitMQ\Queue;
 use ErrorException;
 use Exception;
 use Illuminate\Contracts\Queue\Queue as QueueContract;
+use Illuminate\Contracts\Queue\ShouldBeEncrypted;
 use Illuminate\Queue\Queue;
 use Illuminate\Support\Arr;
+use Illuminate\Support\Facades\Crypt;
 use Illuminate\Support\Str;
 use PhpAmqpLib\Channel\AMQPChannel;
 use PhpAmqpLib\Connection\AbstractConnection;
 use PhpAmqpLib\Exception\AMQPChannelClosedException;
+use PhpAmqpLib\Exception\AMQPConnectionBlockedException;
 use PhpAmqpLib\Exception\AMQPConnectionClosedException;
 use PhpAmqpLib\Exception\AMQPProtocolChannelException;
 use PhpAmqpLib\Exception\AMQPRuntimeException;
@@ -201,7 +204,7 @@ class RabbitMQQueue extends Queue implements QueueContract, RabbitMQQueueContrac
     /**
      * @throws AMQPProtocolChannelException
      */
-    public function bulkRaw(string $payload, string $queue = null, array $options = []): int|string|null
+    public function bulkRaw(string $payload, ?string $queue = null, array $options = []): int|string|null
     {
         [$destination, $exchange, $exchangeType, $attempts] = $this->publishProperties($queue, $options);
 
@@ -394,7 +397,7 @@ class RabbitMQQueue extends Queue implements QueueContract, RabbitMQQueueContrac
      *
      * @throws AMQPProtocolChannelException
      */
-    public function isQueueExists(string $name = null): bool
+    public function isQueueExists(?string $name = null): bool
     {
         $queueName = $this->getQueue($name);
 
@@ -481,7 +484,7 @@ class RabbitMQQueue extends Queue implements QueueContract, RabbitMQQueueContrac
     /**
      * Purge the queue of messages.
      */
-    public function purge(string $queue = null): void
+    public function purge(?string $queue = null): void
     {
         // create a temporary channel, so the main channel will not be closed on exception
         $channel = $this->createChannel();
@@ -525,6 +528,11 @@ class RabbitMQQueue extends Queue implements QueueContract, RabbitMQQueueContrac
         }
 
         if (isset($currentPayload['data']['command'])) {
+            // If the command data is encrypted, decrypt it first before attempting to unserialize
+            if (is_subclass_of($currentPayload['data']['commandName'], ShouldBeEncrypted::class)) {
+                $currentPayload['data']['command'] = Crypt::decrypt($currentPayload['data']['command']);
+            }
+
             $commandData = unserialize($currentPayload['data']['command']);
             if (property_exists($commandData, 'priority')) {
                 $properties['priority'] = $commandData->priority;
@@ -629,7 +637,7 @@ class RabbitMQQueue extends Queue implements QueueContract, RabbitMQQueueContrac
     /**
      * Get the exchange name, or empty string; as default value.
      */
-    protected function getExchange(string $exchange = null): string
+    protected function getExchange(?string $exchange = null): string
     {
         return $exchange ?? $this->getConfig()->getExchange();
     }
@@ -646,7 +654,7 @@ class RabbitMQQueue extends Queue implements QueueContract, RabbitMQQueueContrac
     /**
      * Get the exchangeType, or AMQPExchangeType::DIRECT as default.
      */
-    protected function getExchangeType(string $type = null): string
+    protected function getExchangeType(?string $type = null): string
     {
         $constant = AMQPExchangeType::class.'::'.Str::upper($type ?: $this->getConfig()->getExchangeType());
 
@@ -656,7 +664,7 @@ class RabbitMQQueue extends Queue implements QueueContract, RabbitMQQueueContrac
     /**
      * Get the exchange for failed messages.
      */
-    protected function getFailedExchange(string $exchange = null): string
+    protected function getFailedExchange(?string $exchange = null): string
     {
         return $exchange ?? $this->getConfig()->getFailedExchange();
     }
@@ -691,7 +699,7 @@ class RabbitMQQueue extends Queue implements QueueContract, RabbitMQQueueContrac
      *
      * @throws AMQPProtocolChannelException
      */
-    protected function declareDestination(string $destination, string $exchange = null, string $exchangeType = AMQPExchangeType::DIRECT): void
+    protected function declareDestination(string $destination, ?string $exchange = null, string $exchangeType = AMQPExchangeType::DIRECT): void
     {
         // When an exchange is provided and no exchange is present in RabbitMQ, create an exchange.
         if ($exchange && ! $this->isExchangeExists($exchange)) {
@@ -732,6 +740,11 @@ class RabbitMQQueue extends Queue implements QueueContract, RabbitMQQueueContrac
         return $this->config;
     }
 
+    /**
+     * @throws AMQPChannelClosedException
+     * @throws AMQPConnectionClosedException
+     * @throws AMQPConnectionBlockedException
+     */
     protected function publishBasic($msg, $exchange = '', $destination = '', $mandatory = false, $immediate = false, $ticket = null): void
     {
         $this->getChannel()->basic_publish($msg, $exchange, $destination, $mandatory, $immediate, $ticket);
